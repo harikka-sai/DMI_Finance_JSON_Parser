@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>JSON to CSV Converter</title>
+</head>
+<body>
+
+<h1>JSON to CSV Converter</h1>
+
+<form id="jsonForm">
+    <label for="jsonData">Enter JSON Data:</label>
+    <textarea id="jsonData" name="jsonData" rows="4" cols="50"></textarea><br><br>
+    <button type="button" onclick="convertToJson()">Convert to CSV</button>
+</form>
+
+<script>
+    async function convertToJson() {
+        const jsonData = document.getElementById('jsonData').value;
+        let options=       {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({"data": JSON.parse(jsonData)})
+        };
+        console.log("options::::::::::",options);
+        try {
+            const response = await fetch('/parseJson',options );
+            console.log("response::::::::::::")
+            if (response.ok) {
+                const blob = await response.blob();
+                const link = document.createElement('a');
+                link.href = URL.createObjectURL(blob);
+                link.download = 'output.csv';
+                link.click();
+            } else {
+                const data = await response.json();
+                alert(data.error || 'An error occurred while converting JSON to CSV');
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            console.log("json data:::::::",jsonData)
+            alert('An error occurred while processing your request');
+        }
+    }
+</script>
+
+</body>
+</html>
