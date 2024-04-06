@@ -144,7 +144,7 @@ function parse(input) {
 }
 
 async function storeInMongoDB(data, dbName, collectionName) {
-    const client = new MongoClient('mongodb://0.0.0.0:27017/', { useUnifiedTopology: true });
+    const client = new MongoClient('mongodb+srv://yerramsettyharikka:uzVJN70ATWOrmpcn@cluster0.cchw4r1.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0', { useUnifiedTopology: true });
 
     try {
         await client.connect();
