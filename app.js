@@ -22,7 +22,7 @@ app.post('/parseJson', async (req, res) => {
             throw new Error('Invalid JSON data');
         }
 
-        await parserService.main(jsonData);
+        await parserService.main(jsonData, res);
 
         const csvFilePath = './output.csv';
         res.download(csvFilePath, 'output.csv');

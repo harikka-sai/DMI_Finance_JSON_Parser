@@ -103,7 +103,7 @@ function flattenObject(data, parentKey = '', result = {}) {
     return result;
 }
 
-async function storeInMongoDB(data, dbName) {
+async function storeInMongoDB(data, dbName, res) {
     try {
         await client.connect();
         const db = client.db(dbName);
@@ -129,19 +129,15 @@ async function storeInMongoDB(data, dbName) {
 
         const flattenedData = exportData.map(item => flattenObject(item));
 
-
-        const downloadsFolder = path.join(__dirname, 'downloads');
-        const csvFilePath = path.join(downloadsFolder, 'output.csv');
-
-        fs.writeFileSync(csvFilePath, flattenedData);
-
-        // Set Content-Disposition header to trigger download with the filename
-        res.set('Content-Disposition', `attachment; filename=${csvFilePath}`);
-
-        // Send a success response
-        res.send('CSV file downloaded successfully');
-
-
+        const ws = fs.createWriteStream('output.csv');
+        csv.write(flattenedData, { headers: true })
+            .pipe(res)
+            .on('finish', () => {
+                console.log('CSV file successfully exported.');
+            })
+            .on('error', (error) => {
+                console.error('Error writing CSV:', error);
+            });
 
     } catch (error) {
         console.error('Error storing data in MongoDB:', error);
@@ -184,13 +180,13 @@ async function exportCollectionDataToCSV(db, collectionName) {
     return await cursor.project({ _id: 0 }).toArray();
 }
 
-async function main(inputData) {
+async function main(inputData, res) {
     try {
         let parsedData = JSON.parse(inputData);
         if (typeof parsedData !== 'object' || parsedData === null) {
             throw new Error('Parsed data is not a valid JSON object');
         }
-        await storeInMongoDB(parsedData, 'parser');
+        await storeInMongoDB(parsedData, 'parser', res);
     } catch (error) {
         throw new Error('Error while parsing the data');
     }
