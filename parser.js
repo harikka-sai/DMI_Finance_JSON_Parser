@@ -1,159 +1,142 @@
 const fs = require('fs');
-const { MongoClient } = require('mongodb');
+const { MongoClient, ObjectID } = require('mongodb');
+const moment = require('moment');
+const csv = require('fast-csv');
+const url = 'mongodb://localhost:27017';
+const client = new MongoClient(url, { useNewUrlParser: true, useUnifiedTopology: true });
+// ... (The generateJSONSchema function remains unchanged)
 
-function parse(input) {
-    let currentIndex = 0;
+function generateJSONSchema(data, customization = {}, prefix = '') {
+    const schema = {
+        type: 'object',
+        properties: {}
+    };
 
-    function getToken() {
-        const char = input[currentIndex];
+    // Custom date validation function
+    function validateDate(dateString) {
+        const formats = [
+            'YYYY-MM-DD',
+            'DDMMYYYY',
+            // Add more formats as needed
+        ];
 
-        while (char && /\s/.test(char)) {
-            currentIndex++;
-        }
-
-        if (!char) {
-            return null; // End of string
-        }
-
-        if (char === '{' || char === '[') {
-            return { type: 'objectStart' };
-        }
-
-        if (char === '}' || char === ']') {
-            return { type: 'objectEnd' };
-        }
-
-        if (char === '"') {
-            let value = '';
-            currentIndex++; // Skip opening quote
-            while (input[currentIndex] !== '"') {
-                value += input[currentIndex];
-                currentIndex++;
+        for (const format of formats) {
+            const parsedDate = moment(dateString, format, true);
+            if (parsedDate.isValid()) {
+                return true;
             }
-            currentIndex++; // Skip closing quote
-            return { type: 'string', value };
         }
 
-        if (char === '<') {
-            return { type: 'xmlTagStart' };
-        }
-
-        if (char === '>') {
-            return { type: 'xmlTagEnd' };
-        }
-
-        if (/^-?\d+(\.\d+)?/.test(input.substring(currentIndex))) {
-            const value = parseFloat(input.substring(currentIndex));
-            currentIndex += value.toString().length;
-            return { type: 'number', value };
-        }
-
-        if (input.startsWith('true', currentIndex)) {
-            currentIndex += 4;
-            return { type: 'boolean', value: true };
-        }
-
-        if (input.startsWith('false', currentIndex)) {
-            currentIndex += 5;
-            return { type: 'boolean', value: false };
-        }
-
-        if (input.startsWith('null', currentIndex)) {
-            currentIndex += 4;
-            return { type: 'null', value: null };
-        }
-
-        throw new Error('Invalid input');
+        return false;
     }
 
-    function parseObject() {
-        const obj = {};
-        let token = getToken();
+    for (let key in data) {
+        const fieldName = prefix ? `${prefix}${key}` : key;
+        const fieldType = typeof data[key];
+        const fieldSchema = {};
 
-        while (token && token.type !== 'objectEnd') {
-            if (token.type !== 'string') {
-                throw new Error('Invalid object key');
-            }
-            const key = token.value;
-            token = getToken(); // Consume colon
-            if (token.type !== 'xmlTagStart' && token.type !== 'objectStart') {
-                throw new Error('Expected colon after object key');
-            }
-            token = getToken(); // Consume value
-            obj[key] = parseValue(token);
-            token = getToken(); // Consume comma or objectEnd
+        const options = customization[fieldName] || {};
+        const isRequired = options.required || false;
+        const minLength = options.minLength || null;
+        const maxLength = options.maxLength || null;
+        const dateFormat = options.dateFormat || null;
+
+        if (minLength !== null) {
+            fieldSchema.minLength = minLength;
         }
 
-        return obj;
-    }
-
-    function parseArray() {
-        const arr = [];
-        let token = getToken();
-
-        while (token && token.type !== 'objectEnd') {
-            arr.push(parseValue(token));
-            token = getToken(); // Consume comma or objectEnd
+        if (maxLength !== null) {
+            fieldSchema.maxLength = maxLength;
         }
 
-        return arr;
-    }
-
-    function parseValue(token) {
-        switch (token.type) {
-            case 'string':
-            case 'number':
-            case 'boolean':
-            case 'null':
-                return token.value;
-            case 'objectStart':
-                return parseObject();
-            case 'xmlTagStart':
-                return parseXML();
-            default:
-                throw new Error('Unexpected token');
+        if (isRequired) {
+            schema.required = schema.required || [];
+            schema.required.push(fieldName);
         }
-    }
 
-    function parseXML() {
-        const obj = {};
-        let token = getToken();
-
-        while (token && token.type !== 'xmlTagEnd') {
-            if (token.type !== 'string') {
-                throw new Error('Invalid XML tag name');
-            }
-            const key = token.value;
-            token = getToken(); // Consume closing angle bracket or attribute name
-            if (token.type === 'string') {
-                const value = token.value;
-                obj[key] = value;
-                token = getToken(); // Consume closing angle bracket or attribute name
-            } else if (token.type === 'xmlTagStart') {
-                obj[key] = parseXML();
-                token = getToken(); // Consume closing angle bracket
+        if (Array.isArray(data[key])) {
+            if (data[key].length > 0 && typeof data[key][0] === 'object') {
+                fieldSchema.type = 'array';
+                fieldSchema.items = generateJSONSchema(data[key][0], customization, `${fieldName}.`);
             } else {
-                throw new Error('Invalid XML content');
+                fieldSchema.type = 'array';
+                fieldSchema.items = { type: typeof data[key][0] };
             }
+        } else if (fieldType === 'object') {
+            fieldSchema.type = 'object';
+            fieldSchema.properties = generateJSONSchema(data[key], customization, `${fieldName}.`).properties;
+        } else if (fieldType === 'string') {
+            fieldSchema.type = 'string';
+            if (dateFormat) {
+                fieldSchema.format = dateFormat;
+            } else if (validateDate(data[key])) {
+                fieldSchema.format = 'date';
+            }
+        } else if (fieldType === 'number') {
+            fieldSchema.type = 'number';
+        } else if (fieldType === 'boolean') {
+            fieldSchema.type = 'boolean';
+        } else if (data[key] instanceof Date) {
+            fieldSchema.type = 'string';
+            fieldSchema.format = 'date-time';
         }
 
-        return obj;
+        schema.properties[fieldName] = fieldSchema;
     }
 
-    return parseValue(getToken());
+    return schema;
 }
 
-async function storeInMongoDB(data, dbName, collectionName) {
-    const client = new MongoClient('mongodb+srv://yerramsettyharikka:uzVJN70ATWOrmpcn@cluster0.cchw4r1.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0', { useUnifiedTopology: true });
+function flattenObject(data, parentKey = '', result = {}) {
+    for (const key in data) {
+        const newKey = parentKey ? `${parentKey}_${key}` : key;
+        if (Array.isArray(data[key])) {
+            for (let i = 0; i < data[key].length; i++) {
+                flattenObject(data[key][i], `${newKey}_${i}`, result);
+            }
+        } else if (typeof data[key] === 'object' && data[key] !== null) {
+            flattenObject(data[key], newKey, result);
+        } else {
+            result[newKey] = data[key];
+        }
+    }
+    return result;
+}
 
+async function storeInMongoDB(data, dbName) {
     try {
         await client.connect();
         const db = client.db(dbName);
-        const collection = db.collection(collectionName);
 
-        // Insert data into MongoDB
-        const result = await collection.insertOne(data);
-        console.log(`Inserted document with ID ${result.insertedId} into MongoDB`);
+        if (typeof data === 'string') {
+            data = JSON.parse(data);
+        }
+
+        const dataSchema = generateJSONSchema(data);
+
+        let matchingCollection = await findMatchingCollection(db, dataSchema);
+
+        if (matchingCollection) {
+            await updateCollectionData(db, matchingCollection, data);
+        } else {
+            const newCollectionName = `dynamic_collection_${Date.now()}`.replace(/[.$]/g, '');
+            await createAndInsertNewCollection(db, newCollectionName, dataSchema, data);
+        }
+
+        const finalCollectionName = matchingCollection ? matchingCollection.collectionName : newCollectionName;
+        const exportData = await exportCollectionDataToCSV(db, finalCollectionName);
+
+        const flattenedData = exportData.map(item => flattenObject(item));
+
+        const ws = fs.createWriteStream('output.csv');
+        csv.write(flattenedData, { headers: true })
+            .pipe(ws)
+            .on('finish', () => {
+                console.log('CSV file successfully exported.');
+            })
+            .on('error', (error) => {
+                console.error('Error writing CSV:', error);
+            });
 
     } catch (error) {
         console.error('Error storing data in MongoDB:', error);
@@ -162,25 +145,52 @@ async function storeInMongoDB(data, dbName, collectionName) {
     }
 }
 
-// Main function
-async function main() {
+async function findMatchingCollection(db, dataSchema) {
+    const collections = await db.collections();
+    for (const collection of collections) {
+        const validator = await db.command({ collStats: collection.collectionName }).catch(() => null);
+        if (validator && validator.validator && JSON.stringify(validator.validator.$jsonSchema) === JSON.stringify({ $jsonSchema: dataSchema })) {
+            return collection;
+        }
+    }
+    return null;
+}
+
+async function updateCollectionData(db, collection, data) {
+    await collection.replaceOne(
+        { _id: data._id || new ObjectID() },
+        data,
+        { upsert: true }
+    );
+    console.log(`Inserted or updated document with ID ${data._id || 'generated'} in ${collection.collectionName}`);
+}
+
+async function createAndInsertNewCollection(db, newCollectionName, dataSchema, data) {
+    await db.createCollection(newCollectionName, {
+        validator: { $jsonSchema: dataSchema }
+    });
+    console.log(`Created new collection: ${newCollectionName}`);
+    await db.collection(newCollectionName).insertOne(data);
+    console.log(`Inserted document with ID ${data._id || 'generated'} into new collection ${newCollectionName}`);
+}
+
+async function exportCollectionDataToCSV(db, collectionName) {
+    const cursor = await db.collection(collectionName).find({});
+    return await cursor.project({ _id: 0 }).toArray();
+}
+
+async function main(inputData) {
     try {
-        // Read input data from file
-        const inputData = fs.readFileSync('input.json', 'utf-8');
-
-        // Parse input data"{\n  \"name\":\"shalu\",\n  \"role\":\"xyz\"\n}"
-        // const parsedData = parse(inputData);
-        const parsedData=JSON.parse(inputData);
-
-        // Store parsed data in MongoDB
-        await storeInMongoDB(parsedData, 'parser', 'json_metadata');
-
+        let parsedData = JSON.parse(JSON.stringify(inputData));
+        if (typeof parsedData !== 'object' || parsedData === null) {
+            throw new Error('Parsed data is not a valid JSON object');
+        }
+        await storeInMongoDB(parsedData, 'parser');
     } catch (error) {
-        console.error('Error:', error);
+        throw new Error('Error while parsing the data');
     }
 }
 
-// Execute main function
-module.exports={
-    main:main
-}
+module.exports = {
+    main: main
+};
