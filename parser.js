@@ -129,15 +129,19 @@ async function storeInMongoDB(data, dbName) {
 
         const flattenedData = exportData.map(item => flattenObject(item));
 
-        const ws = fs.createWriteStream('output.csv');
-        csv.write(flattenedData, { headers: true })
-            .pipe(ws)
-            .on('finish', () => {
-                console.log('CSV file successfully exported.');
-            })
-            .on('error', (error) => {
-                console.error('Error writing CSV:', error);
-            });
+
+        const downloadsFolder = path.join(__dirname, 'downloads');
+        const csvFilePath = path.join(downloadsFolder, 'output.csv');
+
+        fs.writeFileSync(csvFilePath, flattenedData);
+
+        // Set Content-Disposition header to trigger download with the filename
+        res.set('Content-Disposition', `attachment; filename=${csvFilePath}`);
+
+        // Send a success response
+        res.send('CSV file downloaded successfully');
+
+
 
     } catch (error) {
         console.error('Error storing data in MongoDB:', error);
